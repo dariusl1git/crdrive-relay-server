@@ -3,20 +3,18 @@ const WebSocket = require('ws');
 
 const PORT = process.env.PORT || 3000;
 
-// Create an HTTP server so Render can successfully ping health checks
 const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('CR Drive WebSocket Relay is active.\n');
 });
 
 const wss = new WebSocket.Server({ server });
-const rooms = new Map(); // Stores PIN -> { host: ws, hostIp: string, clients: Set of ws }
+const rooms = new Map();
 
 wss.on('connection', (ws, req) => {
     console.log('A client connected!');
     let currentRoomPin = null;
 
-    // Properly extract the real public IP when hosted behind cloud proxies like Render
     const forwarded = req.headers['x-forwarded-for'];
     const clientIp = forwarded ? forwarded.split(',')[0].trim() : req.socket.remoteAddress;
 
@@ -26,7 +24,6 @@ wss.on('connection', (ws, req) => {
 
             if (data.type === 'host') {
                 currentRoomPin = data.pin;
-                
                 rooms.set(currentRoomPin, { host: ws, hostIp: clientIp, clients: new Set() });
                 console.log(`Room hosted successfully with PIN: ${currentRoomPin} | Host IP: ${clientIp}`);
                 ws.send(JSON.stringify({ status: "hosted_success" }));
@@ -54,15 +51,16 @@ wss.on('connection', (ws, req) => {
             else if (data.type === 'packet') {
                 if (currentRoomPin && rooms.has(currentRoomPin)) {
                     const room = rooms.get(currentRoomPin);
-                    if (ws === room.host) {
-                        room.clients.forEach(client => {
-                            if (client.readyState === WebSocket.OPEN) client.send(message);
-                        });
-                    } else {
-                        if (room.host.readyState === WebSocket.OPEN) {
-                            room.host.send(message);
-                        }
+
+                    if (ws !== room.host && room.host && room.host.readyState === WebSocket.OPEN) {
+                        room.host.send(message);
                     }
+
+                    room.clients.forEach(client => {
+                        if (client !== ws && client.readyState === WebSocket.OPEN) {
+                            client.send(message);
+                        }
+                    });
                 }
             }
         } catch (e) {
