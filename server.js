@@ -1,12 +1,24 @@
+const http = require('http');
 const WebSocket = require('ws');
 
 const PORT = process.env.PORT || 3000;
-const wss = new WebSocket.Server({ port: PORT });
+
+// Create an HTTP server so Render can successfully ping health checks
+const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('CR Drive WebSocket Relay is active.\n');
+});
+
+const wss = new WebSocket.Server({ server });
 const rooms = new Map(); // Stores PIN -> { host: ws, hostIp: string, clients: Set of ws }
 
-wss.on('connection', (ws, req) => { // Added 'req' here to access headers
+wss.on('connection', (ws, req) => {
     console.log('A client connected!');
     let currentRoomPin = null;
+
+    // Properly extract the real public IP when hosted behind cloud proxies like Render
+    const forwarded = req.headers['x-forwarded-for'];
+    const clientIp = forwarded ? forwarded.split(',')[0].trim() : req.socket.remoteAddress;
 
     ws.on('message', (message) => {
         try {
@@ -15,12 +27,8 @@ wss.on('connection', (ws, req) => { // Added 'req' here to access headers
             if (data.type === 'host') {
                 currentRoomPin = data.pin;
                 
-                // Extract the real IP, checking Render's proxy header first
-                const forwarded = req.headers['x-forwarded-for'];
-                const hostIp = forwarded ? forwarded.split(',')[0].trim() : req.socket.remoteAddress;
-
-                rooms.set(currentRoomPin, { host: ws, hostIp: hostIp, clients: new Set() });
-                console.log(`Room hosted successfully with PIN: ${currentRoomPin} | Host IP: ${hostIp}`);
+                rooms.set(currentRoomPin, { host: ws, hostIp: clientIp, clients: new Set() });
+                console.log(`Room hosted successfully with PIN: ${currentRoomPin} | Host IP: ${clientIp}`);
                 ws.send(JSON.stringify({ status: "hosted_success" }));
             } 
             else if (data.type === 'join') {
@@ -30,7 +38,6 @@ wss.on('connection', (ws, req) => { // Added 'req' here to access headers
                     room.clients.add(ws);
                     console.log(`Client successfully joined room PIN: ${currentRoomPin}`);
                     
-                    // Send join_success AND pass the real host_ip to the client
                     ws.send(JSON.stringify({ 
                         status: "join_success", 
                         host_ip: room.hostIp 
@@ -77,4 +84,6 @@ wss.on('connection', (ws, req) => { // Added 'req' here to access headers
     });
 });
 
-console.log(`WebSocket relay server is running on port ${PORT}`);
+server.listen(PORT, () => {
+    console.log(`WebSocket relay server is running on port ${PORT}`);
+});
