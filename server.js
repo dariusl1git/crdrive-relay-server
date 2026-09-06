@@ -2,9 +2,9 @@ const WebSocket = require('ws');
 
 const PORT = process.env.PORT || 3000;
 const wss = new WebSocket.Server({ port: PORT });
-const rooms = new Map(); // Stores PIN -> { host: ws, clients: Set of ws }
+const rooms = new Map(); // Stores PIN -> { host: ws, hostIp: string, clients: Set of ws }
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => { // Added 'req' here to access headers
     console.log('A client connected!');
     let currentRoomPin = null;
 
@@ -14,19 +14,29 @@ wss.on('connection', (ws) => {
 
             if (data.type === 'host') {
                 currentRoomPin = data.pin;
-                rooms.set(currentRoomPin, { host: ws, clients: new Set() });
-                console.log(`Room hosted successfully with PIN: ${currentRoomPin}`);
+                
+                // Extract the real IP, checking Render's proxy header first
+                const forwarded = req.headers['x-forwarded-for'];
+                const hostIp = forwarded ? forwarded.split(',')[0].trim() : req.socket.remoteAddress;
+
+                rooms.set(currentRoomPin, { host: ws, hostIp: hostIp, clients: new Set() });
+                console.log(`Room hosted successfully with PIN: ${currentRoomPin} | Host IP: ${hostIp}`);
                 ws.send(JSON.stringify({ status: "hosted_success" }));
             } 
             else if (data.type === 'join') {
                 currentRoomPin = data.pin;
                 if (rooms.has(currentRoomPin)) {
-                    rooms.get(currentRoomPin).clients.add(ws);
-                    console.log(`Client successfully joined room PIN: ${currentRoomPin}`);
-                    ws.send(JSON.stringify({ status: "join_success" }));
-                    
                     const room = rooms.get(currentRoomPin);
-                    if (room && room.host.readyState === WebSocket.OPEN) {
+                    room.clients.add(ws);
+                    console.log(`Client successfully joined room PIN: ${currentRoomPin}`);
+                    
+                    // Send join_success AND pass the real host_ip to the client
+                    ws.send(JSON.stringify({ 
+                        status: "join_success", 
+                        host_ip: room.hostIp 
+                    }));
+                    
+                    if (room.host.readyState === WebSocket.OPEN) {
                         room.host.send(JSON.stringify({ status: "player_joined" }));
                     }
                 } else {
