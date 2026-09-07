@@ -12,7 +12,7 @@ const wss = new WebSocket.Server({ server });
 const rooms = new Map();
 
 wss.on('connection', (ws, req) => {
-    console.log('A client connected!');
+    console.log('A client connected.');
     let currentRoomPin = null;
 
     const forwarded = req.headers['x-forwarded-for'];
@@ -20,12 +20,13 @@ wss.on('connection', (ws, req) => {
 
     ws.on('message', (message) => {
         try {
-            const data = JSON.parse(message);
+            const messageStr = message.toString();
+            const data = JSON.parse(messageStr);
 
             if (data.type === 'host') {
                 currentRoomPin = data.pin;
                 rooms.set(currentRoomPin, { host: ws, hostIp: clientIp, clients: new Set() });
-                console.log(`Room hosted successfully with PIN: ${currentRoomPin} | Host IP: ${clientIp}`);
+                console.log(`[ROOM HOSTED] PIN: ${currentRoomPin} | Host IP: ${clientIp}`);
                 ws.send(JSON.stringify({ status: "hosted_success" }));
             } 
             else if (data.type === 'join') {
@@ -33,18 +34,18 @@ wss.on('connection', (ws, req) => {
                 if (rooms.has(currentRoomPin)) {
                     const room = rooms.get(currentRoomPin);
                     room.clients.add(ws);
-                    console.log(`Client successfully joined room PIN: ${currentRoomPin}`);
+                    console.log(`[CLIENT JOINED] Room PIN: ${currentRoomPin}`);
                     
                     ws.send(JSON.stringify({ 
                         status: "join_success", 
                         host_ip: room.hostIp 
                     }));
                     
-                    if (room.host.readyState === WebSocket.OPEN) {
+                    if (room.host && room.host.readyState === WebSocket.OPEN) {
                         room.host.send(JSON.stringify({ status: "player_joined" }));
                     }
                 } else {
-                    console.log(`Room not found for PIN: ${data.pin}`);
+                    console.log(`[ROOM NOT FOUND] PIN: ${data.pin}`);
                     ws.send(JSON.stringify({ status: "room_not_found" }));
                 }
             }
@@ -52,15 +53,19 @@ wss.on('connection', (ws, req) => {
                 if (currentRoomPin && rooms.has(currentRoomPin)) {
                     const room = rooms.get(currentRoomPin);
 
+                    // If sender is a client, forward packet to the host
                     if (ws !== room.host && room.host && room.host.readyState === WebSocket.OPEN) {
-                        room.host.send(message);
+                        room.host.send(messageStr);
                     }
 
+                    // Forward packet to all other connected clients in the room
                     room.clients.forEach(client => {
                         if (client !== ws && client.readyState === WebSocket.OPEN) {
-                            client.send(message);
+                            client.send(messageStr);
                         }
                     });
+                } else {
+                    console.log(`[PACKET DROPPED] Unbound or non-existent room PIN: ${currentRoomPin}`);
                 }
             }
         } catch (e) {
@@ -74,9 +79,10 @@ wss.on('connection', (ws, req) => {
             const room = rooms.get(currentRoomPin);
             if (room.host === ws) {
                 rooms.delete(currentRoomPin);
-                console.log(`Host left. Closed and removed room PIN: ${currentRoomPin}`);
+                console.log(`[ROOM CLOSED] Host left. Removed room PIN: ${currentRoomPin}`);
             } else {
                 room.clients.delete(ws);
+                console.log(`[CLIENT LEFT] Removed from room PIN: ${currentRoomPin}`);
             }
         }
     });
