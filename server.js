@@ -53,12 +53,10 @@ wss.on('connection', (ws, req) => {
                 if (currentRoomPin && rooms.has(currentRoomPin)) {
                     const room = rooms.get(currentRoomPin);
 
-                    // If sender is a client, forward packet to the host
                     if (ws !== room.host && room.host && room.host.readyState === WebSocket.OPEN) {
                         room.host.send(messageStr);
                     }
 
-                    // Forward packet to all other connected clients in the room
                     room.clients.forEach(client => {
                         if (client !== ws && client.readyState === WebSocket.OPEN) {
                             client.send(messageStr);
@@ -78,6 +76,11 @@ wss.on('connection', (ws, req) => {
         if (currentRoomPin && rooms.has(currentRoomPin)) {
             const room = rooms.get(currentRoomPin);
             if (room.host === ws) {
+                room.clients.forEach(client => {
+                    if (client.readyState === WebSocket.OPEN) {
+                        client.send(JSON.stringify({ status: "host_disconnected" }));
+                    }
+                });
                 rooms.delete(currentRoomPin);
                 console.log(`[ROOM CLOSED] Host left. Removed room PIN: ${currentRoomPin}`);
             } else {
